@@ -60,7 +60,3 @@ python3 canvas_creator.py 12345 quiz quizzes.json --assignment_group_id 92
 python3 canvas_creator.py 12345 assignment assignments.json
 python3 canvas_creator.py 12345 discussion discussions.json
 ```
-
----
-
-You can copy and paste this directly into your README file.
