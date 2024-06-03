@@ -16,9 +16,26 @@ headers = {
     'Content-Type': 'application/json'
 }
 
-DEFAULT_ASSIGNMENT_GROUP_ID = 'default_assignment_group_id'  # Replace with your actual default assignment group ID
+DEFAULT_ASSIGNMENT_GROUP_ID = '92'  # Replace with your actual default assignment group ID
 
-def create_quiz(course_id, assignment_group_id, title, description):
+def canvas_api_request(url, data, request_type='post'):
+    if request_type == 'post':
+        response = requests.post(url, headers=headers, data=json.dumps(data))
+    elif request_type == 'put':
+        response = requests.put(url, headers=headers, data=json.dumps(data))
+    elif request_type == 'delete':
+        response = requests.delete(url, headers=headers, data=json.dumps(data))
+    else:
+        raise ValueError(f"Unsupported request type: {request_type}")
+
+    if response.status_code in [200, 201]:
+        return response.json()
+    else:
+        print(f'API request returned an unexpected status code: {response.status_code}')
+        print('Response:', response.text)
+        return None
+
+def create_quiz(course_id, assignment_group_id, title, description, total_points):
     quiz_data = {
         'quiz': {
             'title': title,
@@ -32,67 +49,68 @@ def create_quiz(course_id, assignment_group_id, title, description):
             'allowed_attempts': 1,
             'scoring_policy': 'keep_highest',
             'one_question_at_a_time': False,
-            'published': True,
-            'points_possible': 10.0
+            'published': False,
+            'points_possible': total_points
         }
     }
-    response = requests.post(f'{base_url}/courses/{course_id}/quizzes', headers=headers, data=json.dumps(quiz_data))
-    if response.status_code in [200, 201]:
-        return response.json()['id']
-    else:
-        print('Quiz creation returned an unexpected status code')
-        print('Status Code:', response.status_code)
-        print('Response:', response.text)
-        return None
+    url = f'{base_url}/courses/{course_id}/quizzes'
+    response = canvas_api_request(url, quiz_data)
+    return response['id'] if response else None
 
-def add_question(course_id, quiz_id, question_name, question_text, question_type, points_possible, answers):
+def add_question(course_id, quiz_id, question):
     question_data = {
         'question': {
-            'question_name': question_name,
-            'question_text': question_text,
-            'question_type': question_type,
-            'points_possible': points_possible,
-            'answers': [
-                {
-                    'answer_text': ans['text'],
-                    'weight': ans['weight'],
-                    'answer_correct': ans['is_correct']
-                } for ans in answers
-            ]
+            'question_name': question['question_name'],
+            'question_text': question['question_text'],
+            'question_type': question['question_type'],
+            'points_possible': question['points_possible']
         }
     }
-    response = requests.post(f'{base_url}/courses/{course_id}/quizzes/{quiz_id}/questions', headers=headers, data=json.dumps(question_data))
-    if response.status_code in [200, 201]:
-        print(f'Question added successfully: {question_name}')
-    else:
-        print(f'Failed to add question: {question_name}')
-        print('Status Code:', response.status_code)
-        print('Response:', response.text)
+    if 'answers' in question:
+        question_data['question']['answers'] = [
+            {
+                'answer_text': ans['answer_text'],
+                'weight': ans['weight']
+            } for ans in question['answers']
+        ]
+    url = f'{base_url}/courses/{course_id}/quizzes/{quiz_id}/questions'
+    canvas_api_request(url, question_data)
 
 def main(course_id, quizzes_file, assignment_group_id=None):
     assignment_group_id = assignment_group_id or DEFAULT_ASSIGNMENT_GROUP_ID
     with open(quizzes_file, 'r') as f:
-        quizzes = json.load(f)
+        quizzes = json.load(f)["quizzes"]
 
+    total_quizzes = 0
     for quiz in quizzes:
-        quiz_id = create_quiz(course_id, assignment_group_id, quiz['title'], quiz['description'])
+        total_points = sum(question['points_possible'] for question in quiz['questions'])
+        quiz_id = create_quiz(course_id, assignment_group_id, quiz['title'], quiz['description'], total_points)
         if quiz_id:
+            total_quizzes += 1
+            print(f'Creating quiz: {quiz["title"]} with {len(quiz["questions"])} questions and {total_points} total points.')
             for question in quiz['questions']:
-                add_question(
-                    course_id,
-                    quiz_id,
-                    question['question_name'],
-                    question['question_text'],
-                    question['question_type'],
-                    question['points_possible'],
-                    question['answers']
-                )
+                add_question(course_id, quiz_id, question)
+    print(f'Total quizzes added: {total_quizzes}')
+    print(f'Quizzes were added to course ID: {course_id}')
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Canvas Quiz and Question Creator')
+    parser = argparse.ArgumentParser(description='Canvas Object Creator')
     parser.add_argument('course_id', type=str, help='ID of the course')
-    parser.add_argument('quizzes_file', type=str, help='Path to the JSON file containing quizzes and questions')
-    parser.add_argument('--assignment_group_id', type=str, help='ID of the assignment group (optional)')
+    parser.add_argument('object_type', type=str, choices=['quiz', 'assignment', 'discussion'], help='Type of object to create')
+    parser.add_argument('data_file', type=str, help='Path to the JSON file containing data for the object')
+    parser.add_argument('--assignment_group_id', type=str, help='ID of the assignment group (optional, required for assignments and quizzes)')
 
     args = parser.parse_args()
-    main(args.course_id, args.quizzes_file, args.assignment_group_id)
+
+    if args.object_type == 'quiz':
+        main(args.course_id, args.data_file, args.assignment_group_id)
+    elif args.object_type == 'assignment':
+        with open(args.data_file, 'r') as f:
+            assignments = json.load(f)["assignments"]
+        for assignment in assignments:
+            create_assignment(args.course_id, args.assignment_group_id, assignment['title'], assignment['description'], assignment['points_possible'])
+    elif args.object_type == 'discussion':
+        with open(args.data_file, 'r') as f:
+            discussions = json.load(f)["discussions"]
+        for discussion in discussions:
+            create_discussion(args.course_id, discussion['title'], discussion['message'])
